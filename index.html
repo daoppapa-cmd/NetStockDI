@@ -883,11 +883,7 @@
             };
 
             // --- Sub-Components (Defined Inside to access state safely) ---
-            const DashboardView = () => {
-                const totalItems = items.length;
-                const lowStockItems = items.filter(i => i.quantity < 5);
-                const totalRequests = requests.filter(r => r.type === 'REQUEST_OUT').length;
-
+            const DashboardView = ({ totalItems, totalRequests, lowStockItems }) => {
                 return (
                 <div className="space-y-4 animate-fadeIn">
                     <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
@@ -926,7 +922,7 @@
                 );
             };
 
-            const TotalDataView = () => {
+            const TotalDataView = ({ totalData }) => {
                 return (
                     <div className="animate-fadeIn pb-20">
                         <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
@@ -968,7 +964,7 @@
                 );
             };
 
-            const SettingsView = () => {
+            const SettingsView = ({ db, showNotification, setConfirmModal }) => {
                 const [recycleTab, setRecycleTab] = useState('items');
                 const [deletedItems, setDeletedItems] = useState([]);
                 const [deletedRequests, setDeletedRequests] = useState([]);
@@ -1061,7 +1057,7 @@
                                 console.error(e);
                                 showNotification('មានបញ្ហា', 'error');
                             }
-                            closeConfirmModal();
+                            setConfirmModal(prev => ({...prev, isOpen: false}));
                         }
                     });
                 };
@@ -1162,7 +1158,7 @@
                 );
             };
 
-            const InventoryView = () => {
+            const InventoryView = ({ items, searchTerm, setSearchTerm, showNotification, setConfirmModal }) => {
                 const [editingItem, setEditingItem] = useState(null);
                 const [viewingCabinet, setViewingCabinet] = useState(null);
                 const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
@@ -1314,6 +1310,53 @@
                     html2pdf().set(opt).from(element).save().then(() => { setIsGeneratingPDF(false); showNotification("បានទាញយក PDF ជោគជ័យ!", "success"); }).catch(err => { console.error(err); setIsGeneratingPDF(false); alert("Error PDF: " + err.message); });
                 };
 
+                const handleDeleteItem = (id, name) => {
+                    setConfirmModal({
+                        isOpen: true,
+                        title: 'បញ្ជាក់ការលុប',
+                        message: `តើអ្នកពិតជាចង់ផ្លាស់ទី "${name}" ទៅធុងសំរាមមែនទេ? អ្នកអាចស្តារវាមកវិញបានក្នុងរយៈពេល ៦០ថ្ងៃ។`,
+                        type: 'danger',
+                        onConfirm: async () => {
+                            try {
+                                const itemSnapshot = await get(ref(db, `inventory_items/${id}`));
+                                if(itemSnapshot.exists()) {
+                                    const itemData = itemSnapshot.val();
+                                    await set(ref(db, `recycle_bin/items/${id}`), {
+                                        ...itemData,
+                                        deletedAt: new Date().toISOString()
+                                    });
+                                    await remove(ref(db, `inventory_items/${id}`));
+                                    showNotification('បានផ្លាស់ទីទៅធុងសំរាម', 'success');
+                                }
+                            } catch (err) {
+                                console.error(err);
+                                showNotification('មានបញ្ហាក្នុងការលុប', 'error');
+                            }
+                            setConfirmModal(prev => ({...prev, isOpen: false}));
+                        }
+                    });
+                };
+
+                const handleUpdateItem = async (e) => {
+                    e.preventDefault();
+                    try {
+                    await update(ref(db, `inventory_items/${editingItem.id}`), {
+                        name: editingItem.name,
+                        category: editingItem.category,
+                        cabinetNo: editingItem.cabinetNo, 
+                        quantity: parseInt(editingItem.quantity),
+                        unit: editingItem.unit,
+                        description: editingItem.description,
+                        lastUpdated: new Date().toISOString()
+                    });
+                    showNotification('កែប្រែទិន្នន័យជោគជ័យ!', 'success');
+                    setEditingItem(null);
+                    } catch (error) {
+                    console.error(error);
+                    showNotification('បរាជ័យក្នុងការកែប្រែ', 'error');
+                    }
+                };
+
                 return (
                 <div className="animate-fadeIn relative">
                     <div className="flex justify-between items-center mb-4">
@@ -1378,7 +1421,7 @@
                         <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden animate-fadeIn">
                         <div className="bg-blue-600 p-4 flex justify-between items-center text-white"><h3 className="font-bold text-lg flex items-center gap-2"><Edit size={20}/> កែប្រែទិន្នន័យ</h3><button onClick={() => setEditingItem(null)} className="hover:bg-blue-700 p-1 rounded"><X size={20}/></button></div>
                         <div className="p-5">
-                            <form onSubmit={(e) => handleUpdateItem(e, editingItem, setEditingItem)}>
+                            <form onSubmit={handleUpdateItem}>
                             <Input label="ឈ្មោះសម្ភារៈ" required value={editingItem.name} onChange={e => setEditingItem({...editingItem, name: e.target.value})} />
                             <div className="grid grid-cols-2 gap-3">
                                 <Select label="ប្រភេទ" value={editingItem.category} onChange={e => setEditingItem({...editingItem, category: e.target.value})} options={[{label: "Computer", value: "Computer"},{label: "Accessory", value: "Accessory"},{label: "Network", value: "Network"},{label: "Printer", value: "Printer"},{label: "Other", value: "Other"}]} />
@@ -1506,8 +1549,9 @@
                             </tr>
                         `).join('');
                         
+                        // Changed to inline-block for better page breaking behavior in html2pdf
                         return `
-                        <div class="transaction-card" style="page-break-inside: avoid; margin-bottom: 15px; border: 1px solid #9ca3af; border-radius: 4px; overflow: hidden; width: 48%; box-sizing: border-box;">
+                        <div class="transaction-card" style="display: inline-block; vertical-align: top; width: 48%; margin-bottom: 15px; margin-right: 1%; border: 1px solid #9ca3af; border-radius: 4px; overflow: hidden; box-sizing: border-box; page-break-inside: avoid; break-inside: avoid;">
                             <div style="background-color: #f3f4f6; padding: 8px; border-bottom: 1px solid #9ca3af;">
                                 <table style="width: 100%; border-collapse: collapse;">
                                     <tr>
@@ -1546,14 +1590,6 @@
                                 .sub-header { font-size: 12px; color: #6b7280; margin-top: 5px; }
                                 .report-title { text-align: center; font-size: 14px; font-weight: bold; margin: 10px 0 20px 0; color: #111827; }
                                 
-                                /* Flex Layout for 2 Columns */
-                                .flex-container {
-                                    display: flex;
-                                    flex-wrap: wrap;
-                                    justify-content: space-between;
-                                    align-items: flex-start;
-                                }
-                                
                                 .signatures { margin-top: 30px; display: flex; justify-content: space-between; padding: 0 20px; page-break-inside: avoid; }
                                 .sig-block { text-align: center; width: 200px; }
                                 .sig-line { border-top: 1px solid #9ca3af; padding-top: 8px; font-size: 11px; font-weight: bold; }
@@ -1569,7 +1605,7 @@
                                 របាយការណ៍ប្រវត្តិ (${historyTab.toUpperCase()})
                             </div>
                             
-                            <div class="flex-container">
+                            <div>
                                 ${vouchersHtml}
                             </div>
                             
@@ -1591,7 +1627,7 @@
                         image: { type: 'jpeg', quality: 0.98 }, 
                         html2canvas: { scale: 2, useCORS: true, scrollY: 0 }, 
                         jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-                        pagebreak: { mode: 'avoid-all', before: '#page-break' }
+                        pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
                     };
                     html2pdf().set(opt).from(element).save().then(() => setIsGeneratingPDF(false));
                 };
@@ -1601,9 +1637,18 @@
                         <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2"><History size={20} className="text-orange-600" /> ប្រវត្តិប្រតិបត្តិការ</h2>
                         <div className="flex flex-col gap-3 mb-6">
                             <div className="flex gap-2 bg-gray-100 rounded-lg p-1 overflow-x-auto">
-                                <button type="button" onClick={() => setHistoryTab('direct')} className={`flex-1 min-w-max px-3 py-2 text-sm font-medium rounded-md transition-all flex items-center justify-center gap-2 ${historyTab === 'direct' ? 'bg-white text-orange-600 shadow-sm' : 'text-gray-500'}`}><PackageMinus size={16} /> ដកចេញទូទៅ</button>
-                                <button type="button" onClick={() => setHistoryTab('request')} className={`flex-1 min-w-max px-3 py-2 text-sm font-medium rounded-md transition-all flex items-center justify-center gap-2 ${historyTab === 'request' ? 'bg-white text-purple-600 shadow-sm' : 'text-gray-500'}`}><ClipboardList size={16} /> ប្រវត្តិសំណើ</button>
-                                <button type="button" onClick={() => setHistoryTab('broken')} className={`flex-1 min-w-max px-3 py-2 text-sm font-medium rounded-md transition-all flex items-center justify-center gap-2 ${historyTab === 'broken' ? 'bg-white text-red-600 shadow-sm' : 'text-gray-500'}`}><Wrench size={16} /> សម្ភារៈខូច/ជួសជួល</button>
+                                <button type="button" onClick={() => setHistoryTab('direct')} className={`flex-1 min-w-max px-3 py-2 text-sm font-medium rounded-md transition-all flex items-center justify-center gap-2 ${historyTab === 'direct' ? 'bg-white text-orange-600 shadow-sm' : 'text-gray-500'}`}>
+                                    {historyTab === 'direct' ? <PackageMinus size={16} /> : <PackageMinus size={16} className="text-gray-500" />}
+                                    <span className="hidden sm:inline ml-1">ដកចេញទូទៅ</span>
+                                </button>
+                                <button type="button" onClick={() => setHistoryTab('request')} className={`flex-1 min-w-max px-3 py-2 text-sm font-medium rounded-md transition-all flex items-center justify-center gap-2 ${historyTab === 'request' ? 'bg-white text-purple-600 shadow-sm' : 'text-gray-500'}`}>
+                                    {historyTab === 'request' ? <ClipboardList size={16} /> : <ClipboardList size={16} className="text-gray-500" />}
+                                    <span className="hidden sm:inline ml-1">ប្រវត្តិសំណើ</span>
+                                </button>
+                                <button type="button" onClick={() => setHistoryTab('broken')} className={`flex-1 min-w-max px-3 py-2 text-sm font-medium rounded-md transition-all flex items-center justify-center gap-2 ${historyTab === 'broken' ? 'bg-white text-red-600 shadow-sm' : 'text-gray-500'}`}>
+                                    {historyTab === 'broken' ? <Wrench size={16} /> : <Wrench size={16} className="text-gray-500" />}
+                                    <span className="hidden sm:inline ml-1">សម្ភារៈខូច/ជួសជួល</span>
+                                </button>
                             </div>
                             <div className="flex justify-end gap-2">
                                 <button type="button" onClick={exportToExcel} className="flex items-center gap-1 bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-green-700 shadow-sm"><FileSpreadsheet size={14} /> Excel</button>
@@ -2057,12 +2102,12 @@
                     {notification && <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-[70] w-11/12 max-w-sm animate-fadeIn no-print"><div className={`shadow-lg rounded-lg p-3 text-center text-white font-medium ${notification.type === 'error' ? 'bg-red-500' : 'bg-green-500'}`}>{notification.msg}</div></div>}
                     <ConfirmationModal isOpen={confirmModal.isOpen} title={confirmModal.title} message={confirmModal.message} onConfirm={confirmModal.onConfirm} onCancel={closeConfirmModal} type={confirmModal.type} />
                     <main className="p-4">
-                        {activeTab === 'dashboard' && <DashboardView />}
-                        {activeTab === 'inventory' && <InventoryView />}
+                        {activeTab === 'dashboard' && <DashboardView totalItems={items.length} totalRequests={requests.filter(r => r.type === 'REQUEST_OUT').length} lowStockItems={items.filter(i => i.quantity < 5)} />}
+                        {activeTab === 'inventory' && <InventoryView items={items} searchTerm={searchTerm} setSearchTerm={setSearchTerm} showNotification={showNotification} setConfirmModal={setConfirmModal} />}
                         {activeTab === 'operations' && <OperationsView />}
                         {activeTab === 'history' && <HistoryView />}
-                        {activeTab === 'settings' && <SettingsView />}
-                        {activeTab === 'total_data' && <TotalDataView />}
+                        {activeTab === 'settings' && <SettingsView db={db} showNotification={showNotification} setConfirmModal={setConfirmModal} />}
+                        {activeTab === 'total_data' && <TotalDataView totalData={totalData} />}
                     </main>
                     <div className="fixed bottom-0 w-full bg-white border-t border-gray-200 shadow-lg flex justify-around py-2 z-40 max-w-md left-1/2 transform -translate-x-1/2 no-print">
                         <button type="button" onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center gap-1 p-2 rounded-lg transition-colors ${activeTab === 'dashboard' ? 'text-blue-600 bg-blue-50' : 'text-gray-400'}`}><LayoutDashboard size={24} /></button>
